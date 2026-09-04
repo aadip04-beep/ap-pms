@@ -1,0 +1,479 @@
+// AP-PMS Database Schema
+// Target: PostgreSQL (Neon)
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// ENUMS
+// ---------------------------------------------------------------------------
+
+enum Role {
+  DGM
+  TEAM_MEMBER
+}
+
+enum ProjectStatus {
+  ACTIVE
+  UPCOMING
+  DELAYED
+  CRITICAL
+  COMPLETED
+  ON_HOLD
+}
+
+enum ProjectPriority {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum HealthStatus {
+  HEALTHY
+  WATCH
+  AT_RISK
+  CRITICAL
+}
+
+enum TaskPriority {
+  CRITICAL
+  VERY_HIGH
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum TaskStatus {
+  NOT_STARTED
+  PLANNED
+  IN_PROGRESS
+  WAITING_INPUT
+  WAITING_CLIENT
+  WAITING_TEAM
+  BLOCKED
+  SUBMITTED
+  UNDER_REVIEW
+  COMPLETED
+  VERIFIED
+  REOPENED
+  CANCELLED
+}
+
+enum VerificationStatus {
+  NOT_SUBMITTED
+  PENDING_VERIFICATION
+  VERIFIED
+  REJECTED
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum RiskSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IssueStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum NotificationType {
+  CRITICAL_TASK_ASSIGNED
+  DEADLINE_APPROACHING
+  TASK_OVERDUE
+  TASK_COMPLETED
+  AWAITING_VERIFICATION
+  PRIORITY_CHANGE_REQUESTED
+  DEADLINE_EXTENSION_REQUESTED
+  INVOICE_TARGET_APPROACHING
+  TASK_REASSIGNED
+  TASK_REOPENED
+}
+
+// ---------------------------------------------------------------------------
+// USERS
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String  @id @default(cuid())
+  name         String
+  email        String? @unique
+  phone        String?
+  passwordHash String
+  role         Role    @default(TEAM_MEMBER)
+  jobTitle     String?
+  department   String? // e.g. "HO Staff", "Field Staff"
+  isActive     Boolean @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  managedProjects      Project[]              @relation("ProjectManager")
+  projectMemberships   ProjectMember[]
+  createdTasks         Task[]                 @relation("TaskCreatedBy")
+  assignedTasks         Task[]                @relation("TaskAssignedTo")
+  verifiedTasks         Task[]                @relation("TaskVerifiedBy")
+  comments              Comment[]
+  attachments           Attachment[]
+  notifications         Notification[]
+  activityLogs          ActivityLog[]
+  ownedRisks            Risk[]                @relation("RiskOwner")
+  ownedIssues            Issue[]               @relation("IssueOwner")
+  priorityRequests       PriorityChangeRequest[] @relation("PriorityRequestedBy")
+  priorityDecisions      PriorityChangeRequest[] @relation("PriorityDecidedBy")
+  extensionRequests      DeadlineExtensionRequest[] @relation("ExtensionRequestedBy")
+  extensionDecisions     DeadlineExtensionRequest[] @relation("ExtensionDecidedBy")
+  invoiceActualsRecorded InvoiceActual[]
+
+  @@index([role])
+}
+
+// ---------------------------------------------------------------------------
+// PROJECTS
+// ---------------------------------------------------------------------------
+
+model Project {
+  id                     String          @id @default(cuid())
+  code                   String          @unique
+  name                   String
+  client                 String?
+  authorityDepartment    String?
+  projectType            String?
+  location               String?
+  projectManagerId       String?
+  projectManager         User?           @relation("ProjectManager", fields: [projectManagerId], references: [id])
+  contractValue          Decimal?        @db.Decimal(16, 2)
+  startDate              DateTime?
+  originalCompletionDate DateTime?
+  revisedCompletionDate  DateTime?
+  status                 ProjectStatus   @default(ACTIVE)
+  priority               ProjectPriority @default(MEDIUM)
+  progressPercent        Int             @default(0)
+  healthStatus           HealthStatus    @default(HEALTHY)
+  healthScore            Int             @default(100)
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+
+  members            ProjectMember[]
+  tasks              Task[]
+  milestones         Milestone[]
+  risks              Risk[]
+  issues             Issue[]
+  attachments        Attachment[]
+  threeYearPlans     InvoiceThreeYearPlan[]
+  invoiceActuals     InvoiceActual[]
+  activityLogs       ActivityLog[]
+
+  @@index([status])
+  @@index([priority])
+}
+
+model ProjectMember {
+  id         String   @id @default(cuid())
+  projectId  String
+  userId     String
+  roleOnProject String?
+  addedAt    DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+}
+
+model Milestone {
+  id          String    @id @default(cuid())
+  projectId   String
+  title       String
+  dueDate     DateTime
+  achievedDate DateTime?
+  status      String    @default("PENDING") // PENDING, ACHIEVED, MISSED
+  createdAt   DateTime  @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// TASKS
+// ---------------------------------------------------------------------------
+
+model Task {
+  id                 String              @id @default(cuid())
+  taskCode           String              @unique
+  title              String
+  description        String?
+  projectId          String
+  parentTaskId       String?
+  assignedToId       String?
+  createdById        String
+
+  teamPriority       TaskPriority?       // priority suggested by the team
+  dgmPriority        TaskPriority        @default(MEDIUM) // final authority
+  status             TaskStatus          @default(NOT_STARTED)
+
+  startDate          DateTime?
+  dueDate             DateTime?
+  dueTime             String?             // "HH:mm" — kept as string, paired with dueDate
+  estimatedEffortHours Decimal?           @db.Decimal(8, 2)
+  actualEffortHours   Decimal?           @db.Decimal(8, 2)
+  remarks             String?
+
+  completionDate      DateTime?
+  verificationStatus  VerificationStatus  @default(NOT_SUBMITTED)
+  verifiedById        String?
+  verificationDate    DateTime?
+
+  createdAt           DateTime            @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parentTask   Task?    @relation("Subtasks", fields: [parentTaskId], references: [id])
+  subtasks     Task[]   @relation("Subtasks")
+  assignedTo   User?    @relation("TaskAssignedTo", fields: [assignedToId], references: [id])
+  createdBy    User     @relation("TaskCreatedBy", fields: [createdById], references: [id])
+  verifiedBy   User?    @relation("TaskVerifiedBy", fields: [verifiedById], references: [id])
+
+  dependsOn       TaskDependency[] @relation("DependentTask")
+  blocks          TaskDependency[] @relation("PrerequisiteTask")
+  comments        Comment[]
+  attachments     Attachment[]
+  priorityRequests PriorityChangeRequest[]
+  extensionRequests DeadlineExtensionRequest[]
+
+  @@index([projectId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([dgmPriority])
+  @@index([dueDate])
+}
+
+// taskId is "blocked by" dependsOnTaskId
+model TaskDependency {
+  id            String @id @default(cuid())
+  taskId        String
+  dependsOnTaskId String
+
+  task        Task @relation("DependentTask", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOnTask Task @relation("PrerequisiteTask", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, dependsOnTaskId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  taskId    String
+  userId    String
+  body      String
+  createdAt DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Attachment {
+  id           String   @id @default(cuid())
+  taskId       String?
+  projectId    String?
+  fileName     String
+  url          String
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  task    Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadedBy User  @relation(fields: [uploadedById], references: [id])
+}
+
+model PriorityChangeRequest {
+  id             String        @id @default(cuid())
+  taskId         String
+  requestedById  String
+  requestedPriority TaskPriority
+  reason         String?
+  status         RequestStatus @default(PENDING)
+  decidedById    String?
+  decidedAt      DateTime?
+  createdAt      DateTime      @default(now())
+
+  task        Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  requestedBy User @relation("PriorityRequestedBy", fields: [requestedById], references: [id])
+  decidedBy   User? @relation("PriorityDecidedBy", fields: [decidedById], references: [id])
+}
+
+model DeadlineExtensionRequest {
+  id             String        @id @default(cuid())
+  taskId         String
+  requestedById  String
+  requestedDueDate DateTime
+  reason         String?
+  status         RequestStatus @default(PENDING)
+  decidedById    String?
+  decidedAt      DateTime?
+  createdAt      DateTime      @default(now())
+
+  task        Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  requestedBy User @relation("ExtensionRequestedBy", fields: [requestedById], references: [id])
+  decidedBy   User? @relation("ExtensionDecidedBy", fields: [decidedById], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// RISKS & ISSUES
+// ---------------------------------------------------------------------------
+
+model Risk {
+  id          String       @id @default(cuid())
+  projectId   String
+  title       String
+  description String?
+  severity    RiskSeverity @default(MEDIUM)
+  ownerId     String?
+  status      String       @default("OPEN")
+  createdAt   DateTime     @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  owner   User?   @relation("RiskOwner", fields: [ownerId], references: [id])
+}
+
+model Issue {
+  id          String      @id @default(cuid())
+  projectId   String
+  title       String
+  description String?
+  status      IssueStatus @default(OPEN)
+  ownerId     String?
+  createdAt   DateTime    @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  owner   User?   @relation("IssueOwner", fields: [ownerId], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// INVOICE / REVENUE PLANNING (3-level cascading)
+// ---------------------------------------------------------------------------
+
+model InvoiceThreeYearPlan {
+  id          String   @id @default(cuid())
+  projectId   String
+  startYear   Int
+  totalTarget Decimal  @db.Decimal(16, 2)
+  createdAt   DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  annualTargets InvoiceAnnualTarget[]
+}
+
+model InvoiceAnnualTarget {
+  id            String  @id @default(cuid())
+  planId        String
+  year          Int
+  targetAmount  Decimal @db.Decimal(16, 2)
+
+  plan InvoiceThreeYearPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  quarterlyTargets InvoiceQuarterlyTarget[]
+
+  @@unique([planId, year])
+}
+
+model InvoiceQuarterlyTarget {
+  id              String  @id @default(cuid())
+  annualTargetId  String
+  quarter         Int // 1-4
+  targetAmount    Decimal @db.Decimal(16, 2)
+
+  annualTarget InvoiceAnnualTarget @relation(fields: [annualTargetId], references: [id], onDelete: Cascade)
+  monthlyTargets InvoiceMonthlyTarget[]
+
+  @@unique([annualTargetId, quarter])
+}
+
+model InvoiceMonthlyTarget {
+  id               String  @id @default(cuid())
+  quarterlyTargetId String
+  month            Int // 1-12
+  targetAmount     Decimal @db.Decimal(16, 2)
+
+  quarterlyTarget InvoiceQuarterlyTarget @relation(fields: [quarterlyTargetId], references: [id], onDelete: Cascade)
+  weeklyTargets InvoiceWeeklyTarget[]
+
+  @@unique([quarterlyTargetId, month])
+}
+
+model InvoiceWeeklyTarget {
+  id               String  @id @default(cuid())
+  monthlyTargetId  String
+  weekNumber       Int // 1-4(5)
+  targetAmount     Decimal @db.Decimal(16, 2)
+
+  monthlyTarget InvoiceMonthlyTarget @relation(fields: [monthlyTargetId], references: [id], onDelete: Cascade)
+
+  @@unique([monthlyTargetId, weekNumber])
+}
+
+model InvoiceActual {
+  id           String   @id @default(cuid())
+  projectId    String
+  date         DateTime
+  amount       Decimal  @db.Decimal(16, 2)
+  description  String?
+  recordedById String
+  createdAt    DateTime @default(now())
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  recordedBy User    @relation(fields: [recordedById], references: [id])
+
+  @@index([projectId, date])
+}
+
+// ---------------------------------------------------------------------------
+// NOTIFICATIONS & AUDIT
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id               String           @id @default(cuid())
+  userId           String
+  type             NotificationType
+  message          String
+  isRead           Boolean          @default(false)
+  relatedTaskId    String?
+  relatedProjectId String?
+  createdAt        DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+}
+
+model ActivityLog {
+  id            String   @id @default(cuid())
+  userId        String?
+  action        String   // e.g. "TASK_STATUS_CHANGED", "PRIORITY_OVERRIDDEN"
+  entityType    String   // "Task" | "Project" | ...
+  entityId      String
+  previousValue String?
+  newValue      String?
+  projectId     String?
+  createdAt     DateTime @default(now())
+
+  user    User?    @relation(fields: [userId], references: [id])
+  project Project? @relation(fields: [projectId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([projectId])
+}
