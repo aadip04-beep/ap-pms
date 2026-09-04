@@ -184,3 +184,4 @@ esbuild syntax pass. Run `npm install && npx prisma generate && npm run
 build` locally as your first step — with normal internet access this is a
 completely standard Next.js + Prisma setup and should build cleanly. If
 anything surfaces, it'll be a small, easy-to-spot fix.
+
