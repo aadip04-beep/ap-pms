@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { classifyDueDate } from "@/lib/utils";
+import type { TaskStatus } from "@prisma/client";
 
-const OPEN_TASK_STATUSES = ["NOT_STARTED", "PLANNED", "IN_PROGRESS", "WAITING_INPUT", "WAITING_CLIENT", "WAITING_TEAM", "BLOCKED", "SUBMITTED", "UNDER_REVIEW", "REOPENED"] as const;
+const OPEN_TASK_STATUSES: TaskStatus[] = ["NOT_STARTED", "PLANNED", "IN_PROGRESS", "WAITING_INPUT", "WAITING_CLIENT", "WAITING_TEAM", "BLOCKED", "SUBMITTED", "UNDER_REVIEW", "REOPENED"];
 
 export async function getOrgOverview() {
   const [totalProjects, activeProjects, criticalProjects, delayedProjects, totalMembers, openTasks, awaitingVerification] = await Promise.all([
@@ -11,7 +12,7 @@ export async function getOrgOverview() {
     prisma.project.count({ where: { status: "DELAYED" } }),
     prisma.user.count({ where: { role: "TEAM_MEMBER", isActive: true } }),
     prisma.task.findMany({
-      where: { status: { in: OPEN_TASK_STATUSES as unknown as string[] } },
+      where: { status: { in: OPEN_TASK_STATUSES } },
       select: { id: true, dueDate: true, dgmPriority: true, status: true },
     }),
     prisma.task.count({ where: { verificationStatus: "PENDING_VERIFICATION" } }),
@@ -79,13 +80,13 @@ export async function getAttentionFeed(opts: { role: "DGM" | "TEAM_MEMBER"; user
 
   const [overdueCritical, dueToday, awaitingVerification, priorityRequests, extensionRequests] = await Promise.all([
     prisma.task.findMany({
-      where: { ...taskWhere, status: { in: OPEN_TASK_STATUSES as unknown as string[] }, dgmPriority: "CRITICAL" },
+      where: { ...taskWhere, status: { in: OPEN_TASK_STATUSES }, dgmPriority: "CRITICAL" },
       include: { project: { select: { name: true, code: true } }, assignedTo: { select: { name: true } } },
       orderBy: { dueDate: "asc" },
       take: 20,
     }),
     prisma.task.findMany({
-      where: { ...taskWhere, status: { in: OPEN_TASK_STATUSES as unknown as string[] } },
+      where: { ...taskWhere, status: { in: OPEN_TASK_STATUSES } },
       include: { project: { select: { name: true, code: true } }, assignedTo: { select: { name: true } } },
       take: 50,
     }),
