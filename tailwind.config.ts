@@ -44,7 +44,7 @@ const config: Config = {
           "repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(139,146,166,0.14) 39px, rgba(139,146,166,0.14) 40px)",
       },
       keyframes: {
-        pulse-dot: {
+        "pulse-dot": {
           "0%, 100%": { opacity: "1" },
           "50%": { opacity: "0.35" },
         },
